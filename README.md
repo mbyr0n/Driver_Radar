@@ -91,6 +91,11 @@ Expected executables:
 radar_driver radar_processor
 radar_driver radar_publisher
 radar_driver radar_visualizer
+radar_driver EthCfgRx.py
+radar_driver SensorCfgRx.py
+radar_driver plot.py
+radar_driver publishTest.py
+radar_driver testPlot.py
 ```
 
 Check that the custom interfaces were generated:
@@ -293,10 +298,45 @@ ros2 topic info /radar/radar_pointcloud
 Open RViz 2 if you want to visualize the cloud:
 
 ```bash
-rviz2
+rviz2 -d install/radar_driver/share/radar_driver/rviz/single_radar_ros2.rviz
 ```
 
-Add a `PointCloud2` display and set the topic to `/radar/radar_pointcloud`.
+The supported RViz2 config uses:
+
+| Display | Topic/Frame |
+| --- | --- |
+| Fixed frame | `radar_fixed` |
+| `PointCloud2` | `/radar/radar_pointcloud` |
+| `Marker` | `/radar/visualization_marker` |
+
+If you open RViz2 manually, set the fixed frame to `radar_fixed`, add a `PointCloud2` display for `/radar/radar_pointcloud`, and add a `Marker` display for `/radar/visualization_marker`.
+
+## Python 3 Scripts
+
+The following scripts are ROS 2/Python 3 compatible and are installed with the package:
+
+| Script | Purpose | Example |
+| --- | --- | --- |
+| `publishTest.py` | Publishes sample `radar_driver/msg/RadarPacket` messages for pipeline testing. | `ros2 run radar_driver publishTest.py --topic /radar/unfiltered_radar_packet` |
+| `EthCfgRx.py` | Sends a raw Ethernet radar network configuration packet. Requires raw socket privileges. | `sudo ros2 run radar_driver EthCfgRx.py -n <iface> -ip <radar_ip> -m <radar_mac>` |
+| `SensorCfgRx.py` | Sends one UDP sensor configuration packet. | `ros2 run radar_driver SensorCfgRx.py --ip 192.168.1.2 --port 31123` |
+| `plot.py` | Offline 3D plot helper for clustering output text files. | `ros2 run radar_driver plot.py --input data/output.txt --output data/test.png` |
+| `testPlot.py` | Offline plot helper for text dumps containing `f_Range` and `f_VrelRad`. | `ros2 run radar_driver testPlot.py --input test7.txt --output radar_plot.png` |
+
+`publishTest.py` is useful for checking the downstream processor/visualizer without live radar traffic. In one terminal run the processor and visualizer, then publish sample packets:
+
+```bash
+ros2 run radar_driver publishTest.py --topic /radar/unfiltered_radar_packet --rate 5
+```
+
+### Deprecated ROS 1 Scripts
+
+These scripts remain in the repository for reference only and are not part of the supported ROS 2 path:
+
+| Script | Status | Reason |
+| --- | --- | --- |
+| `scripts/extract_rosbag_info.py` | Deprecated | Uses ROS 1 `rosbag`. ROS 2 bags use `rosbag2` storage/plugins and need a different implementation. |
+| `utilities/rename_topic.py` | Deprecated | Uses ROS 1 `rosbag.Bag` to rewrite `.bag` files. Use ROS 2 bag tooling or export/republish workflows instead. |
 
 ## Troubleshooting
 

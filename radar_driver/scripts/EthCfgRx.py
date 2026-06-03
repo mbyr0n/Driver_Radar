@@ -1,6 +1,8 @@
+#!/usr/bin/env python3
+
+import fcntl
 import socket
 import struct
-import netifaces as ni
 import argparse
 import ipaddress
 import sys
@@ -45,7 +47,7 @@ def GetIPHeader( LocalIP, DestIP ):
     HeaderByteData[ CHECKSUM_POS ] = (~Checksum) & 0xFFFF
 
     # Encode IPv4 Header data.
-    EncodedHeader = ""
+    EncodedHeader = b""
     for ByteData in HeaderByteData:
         EncodedHeader += struct.pack('!1H', ByteData)
     return EncodedHeader
@@ -68,10 +70,7 @@ def GetPayload( NewTxPort, NewMulticastIP, NewUnicastIP, NewMac ):
 # Input Arguments -- IPString: String representing an IP Address
 # Return          -- Size-4 Array of unsigned integers from the IP Address
 def ConvertIP(IPString):
-    ConvertedIP = IPString.split('.')
-    for i in range(len(ConvertedIP)):
-        ConvertedIP[i] = int(ConvertedIP[i])
-    return ConvertedIP
+    return [int(part) for part in str(ipaddress.ip_address(IPString)).split('.')]
 
 # Input Arguments -- MACString: String representing a MAC Address
 # Return          -- Size-6 Array of unsigned integers from the MAC Address
@@ -91,6 +90,18 @@ def ConvertMac(MacString):
             sys.exit(1)
     return MacArray
 
+
+def GetInterfaceMac(interface_name):
+    with open(f"/sys/class/net/{interface_name}/address", encoding="utf-8") as mac_file:
+        return ConvertMac(mac_file.read().strip())
+
+
+def GetInterfaceIP(interface_name):
+    request = struct.pack('256s', interface_name[:15].encode('utf-8'))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        response = fcntl.ioctl(sock.fileno(), 0x8915, request)
+    return list(response[20:24])
+
 def main():
 
     parser = argparse.ArgumentParser()
@@ -104,17 +115,17 @@ def main():
     args = parser.parse_args()
 
     try:
-        ipaddress.ip_address(unicode(args.currentip))
+        ipaddress.ip_address(args.currentip)
         CurrentRadarIP = ConvertIP(args.currentip)                  # Return an array (size 4) of unsigned integers representing the IP Address
 
-        ipaddress.ip_address(unicode(args.multicastip))
+        ipaddress.ip_address(args.multicastip)
         NewRadarMulticastIP = ConvertIP(args.multicastip)
 
         if (args.unicastip == None):
             args.unicastip = args.currentip
             NewRadarUnicastIP = ConvertIP(args.currentip)           # Set the new Radar IP to the current Radar IP if user specified nothing
         else:
-            ipaddress.ip_address(unicode(args.unicastip))
+            ipaddress.ip_address(args.unicastip)
             NewRadarUnicastIP = ConvertIP(args.unicastip)
 
     except ValueError:
@@ -134,18 +145,8 @@ def main():
 
     # Initialize Connection Properties
     InterfaceName = args.ethname
-    NetInfo = ni.ifaddresses(InterfaceName)
-    LocalMacString = NetInfo[ni.AF_LINK][0]['addr']
-    # Convert LocalMacString to an array of integers
-    LocalMAC = [ int(LocalMacString[0:2], 16), int(LocalMacString[3:5], 16), int(LocalMacString[6:8], 16), int(LocalMacString[9:11], 16), int(LocalMacString[12:14], 16), int(LocalMacString[15:17], 16) ]
-
-    LocalIPString = NetInfo[ni.AF_INET][0]['addr']
-    LocalIP = []                                        # Convert LocalIPString to an array of integers
-    for i in range(3):
-        pos = LocalIPString.find('.')
-        LocalIP.append( int(LocalIPString[:pos]) )
-        LocalIPString = LocalIPString[pos+1:]
-    LocalIP.append( int(LocalIPString) )
+    LocalMAC = GetInterfaceMac(InterfaceName)
+    LocalIP = GetInterfaceIP(InterfaceName)
 
     CurrentRadarRxPort = 31123                          # Current Destination Rx Port
     LocalTxPort = 31123                                 # Current local machine Tx Port
@@ -167,7 +168,7 @@ def main():
     CRC = ((LocalIP[0] << 8) | LocalIP[1]) + ((LocalIP[2] << 8) | LocalIP[3])
     CRC += ((CurrentRadarIP[0] << 8) | CurrentRadarIP[1]) + ((CurrentRadarIP[2] << 8) | CurrentRadarIP[3])
     CRC += Protocol + Length
-    for i in range(len(Payload)/2):                     # Add Data as 16-bit values
+    for i in range(len(Payload) // 2):                  # Add Data as 16-bit values
         val = Payload[(2*i) : (2*i) + 2]
         CRC += struct.unpack('!1H', val)[0]
     CRC += Length + LocalTxPort + CurrentRadarRxPort

@@ -55,6 +55,15 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/EthCfgRx.py
+  scripts/SensorCfgRx.py
+  scripts/plot.py
+  scripts/publishTest.py
+  scripts/testPlot.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY launch rviz
   DESTINATION share/${PROJECT_NAME}
 )

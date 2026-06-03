@@ -1,68 +1,75 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import rospy
-from copy import *
-from ars430_ros_publisher.msg import  EthCfgRx
-from ars430_ros_publisher.msg import  RadarPacket 
-from ars430_ros_publisher.msg import  SensorCfgRx
-from ars430_ros_publisher.msg import  SensorStatus
-from ars430_ros_publisher.msg import  RadarDetection
+import argparse
 
-# initialise
- 
-EthCfgRx_pub        = rospy.Publisher('EthCfgRx_data', EthCfgRx, queue_size=50)
-radar_imageTX_pub   = rospy.Publisher('RadarPacket_data',radar_imageTX, queue_size=50)
-SensorCfgRx_pub     = rospy.Publisher('SensorCfgRx_data', SensorCfgRx, queue_size=50)
-sensor_statusTx_pub = rospy.Publisher('SensorStatus_data',sensor_statusTx, queue_size=50)
+import rclpy
+from rclpy.node import Node
+
+from radar_driver.msg import RadarDetection, RadarPacket
 
 
-rospy.init_node('publish_ars430',anonymous=True)
-r = rospy.Rate(5)
+def make_packet(name):
+    packet = RadarPacket()
+    packet.header.frame_id = 'radar_fixed'
+    packet.event_id = 0
+    packet.time_stamp = 1
+    packet.measurement_counter = 1
+    packet.vambig = 0.0
+    packet.center_frequency = 0.0
+    packet.name = name
 
-#setup messages to publish
-EthCfgRx_msg        = EthCfgRx()
-radar_imageTX_msg   = radar_imageTX()
-SensorCfgRx_msg     = SensorCfgRx()
-sensor_statusTx_msg = sensor_statusTx()
-RadarDetection_msg  = RadarDetection()
+    first = RadarDetection()
+    first.pos_x = 4.0
+    first.pos_y = 0.5
+    first.pos_z = 0.0
+    first.range = 4.0
+    first.vrel_rad = 9.0
+    first.snr = 15.0
+
+    second = RadarDetection()
+    second.pos_x = 7.0
+    second.pos_y = -0.5
+    second.pos_z = 0.0
+    second.range = 7.0
+    second.vrel_rad = 1.0
+    second.snr = 10.0
+
+    packet.detections = [first, second]
+    return packet
 
 
+class RadarPacketTestPublisher(Node):
+    def __init__(self, topic, name, rate_hz):
+        super().__init__('radar_packet_test_publisher')
+        self.publisher = self.create_publisher(RadarPacket, topic, 10)
+        self.packet_name = name
+        self.counter = 0
+        self.timer = self.create_timer(1.0 / rate_hz, self.publish_packet)
 
-radar_imageTX_msg.RDI_Far0_List.append(copy(RadarDetection_msg))
-radar_imageTX_msg.RDI_Far0_List[0].f_Range = 4
-radar_imageTX_msg.RDI_Far0_List[0].f_VrelRad = 9
-radar_imageTX_msg.RDI_Far0_List.append(copy(RadarDetection_msg))
-print(RadarDetection_msg)
-radar_imageTX_msg.RDI_Far0_List[1].f_Range = 7
-radar_imageTX_msg.RDI_Far0_List[1].f_VrelRad = 1
-radar_imageTX_msg.RDI_Far0_List.append(copy(RadarDetection_msg))
+    def publish_packet(self):
+        packet = make_packet(self.packet_name)
+        packet.header.stamp = self.get_clock().now().to_msg()
+        packet.measurement_counter = self.counter
+        packet.time_stamp = self.counter
+        self.publisher.publish(packet)
+        self.counter += 1
 
 
-sensor_statusTx_msg.SensorStatus_CRC = 4
-sensor_statusTx_msg.SensorStatus_Len = 3
-sensor_statusTx_msg.SensorStatus_SerialNumber = [4,3,4,6,7]
+def main():
+    parser = argparse.ArgumentParser(description='Publish sample ROS 2 RadarPacket messages for pipeline testing.')
+    parser.add_argument('--topic', default='/radar/unfiltered_radar_packet', help='Topic to publish sample RadarPacket messages on.')
+    parser.add_argument('--name', default='radar', help='Radar name field in the sample packets.')
+    parser.add_argument('--rate', type=float, default=5.0, help='Publish rate in Hz.')
+    args = parser.parse_args()
 
+    rclpy.init()
+    node = RadarPacketTestPublisher(args.topic, args.name, args.rate)
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
-#while not rospy.is_shutdown():
-rospy.loginfo("Publish SensorCfgRx Started!")
-#rospy.loginfo(SensorCfgRx_msg)
-rospy.loginfo(sensor_statusTx_msg)
-
-#SensorCfgRx_pub.publish(SensorCfgRx_msg)
-radar_imageTX_pub.publish(radar_imageTX_msg)
-r.sleep()
-
-rospy.loginfo("Publish SensorCfgRx Started!")
-rospy.loginfo(sensor_statusTx_msg)
-#rospy.loginfo(SensorCfgRx_msg)
-#rospy.loginfo(radar_imageTX_msg.RDI_Far0_List)
-
-#SensorCfgRx_pub.publish(SensorCfgRx_msg)
-#radar_imageTX_pub.publish(radar_imageTX_msg)
-sensor_statusTx_pub.publish(sensor_statusTx_msg)
-r.sleep()
 
 if __name__ == '__main__':
-	try:
-		rospy.loginfo("Publish SensorCfgRx Ended!")
-	except rospy.ROSInterruptException: pass
+    main()

@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
 
 
 def read(path):
@@ -223,3 +224,49 @@ def test_build_warning_patterns_are_removed():
     assert "unsigned short id, seq;" not in sniffer
     assert "(void)user;" in sniffer
     assert "(void)signo;" in sniffer
+
+
+def test_supported_rviz2_config_exists_and_targets_ros2_topics():
+    config = ROOT / "rviz" / "single_radar_ros2.rviz"
+    text = config.read_text()
+
+    assert "Class: rviz_default_plugins/PointCloud2" in text
+    assert "Topic: /radar/radar_pointcloud" in text
+    assert "Class: rviz_default_plugins/Marker" in text
+    assert "Topic: /radar/visualization_marker" in text
+    assert "Fixed Frame: radar_fixed" in text
+
+
+def test_supported_python_scripts_are_python3_and_do_not_import_ros1_modules():
+    supported = [
+        ROOT / "scripts" / "EthCfgRx.py",
+        ROOT / "scripts" / "SensorCfgRx.py",
+        ROOT / "scripts" / "plot.py",
+        ROOT / "scripts" / "publishTest.py",
+        ROOT / "scripts" / "testPlot.py",
+    ]
+
+    for path in supported:
+        text = path.read_text()
+        assert text.startswith("#!/usr/bin/env python3")
+        assert "import rospy" not in text
+        assert "import rosbag" not in text
+        compile(text, str(path), "exec")
+
+
+def test_legacy_ros1_scripts_are_documented_as_deprecated():
+    readme = (REPO_ROOT / "README.md").read_text()
+
+    assert "Deprecated ROS 1 Scripts" in readme
+    for script in ["extract_rosbag_info.py", "rename_topic.py"]:
+        assert script in readme
+
+
+def test_publish_test_is_ros2_rclpy_sample_publisher():
+    script = read("scripts/publishTest.py")
+
+    assert "import rclpy" in script
+    assert "from radar_driver.msg import RadarDetection, RadarPacket" in script
+    assert "create_publisher(RadarPacket" in script
+    assert "rospy" not in script
+    assert "ars430_ros_publisher" not in script
