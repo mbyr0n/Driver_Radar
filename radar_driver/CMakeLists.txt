@@ -1,109 +1,62 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.8)
 project(radar_driver)
 
-## Compile as C++11, supported in ROS Kinetic and newer
-# add_compile_options(-std=c++11)
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
-## Find catkin macros and libraries
-## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
-## is used, also find other catkin packages
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  std_msgs
-  message_generation
-  genmsg
-  pcl_conversions
-  pcl_ros
-  tf
-  visualization_msgs
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/SensorCfg.msg"
+  "msg/EthCfg.msg"
+  "msg/RadarPacket.msg"
+  "msg/SensorStatus.msg"
+  "msg/RadarDetection.msg"
+  "msg/BoundingBoxList.msg"
+  "msg/BoundingBox.msg"
+  DEPENDENCIES std_msgs
 )
 
-## Generate messages in the 'msg' folder
- add_message_files(
-   FILES
-   SensorCfg.msg
-   EthCfg.msg
-   RadarPacket.msg
-   SensorStatus.msg
-   RadarDetection.msg
-   BoundingBoxList.msg
-   BoundingBox.msg
- )
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
-## Generate added messages and services with any dependencies listed here
- generate_messages(
-   DEPENDENCIES
-   std_msgs
- )
+include_directories(include)
 
-catkin_package(
-  INCLUDE_DIRS include
-  LIBRARIES radar_driver
-  CATKIN_DEPENDS roscpp rospy std_msgs tf
+set(extra_LIBRARIES pcap pthread)
+set(RADAR_UNFILTER_SOURCE src/UnfilteredMain.cpp src/parser.cpp src/sniffer.cpp)
+set(RADAR_FILTER_SOURCE src/radarPublisher.cpp src/processPacket.cpp src/FilteredMain.cpp)
+set(VIS_SOURCE src/PointCloudConverter.cpp)
+
+add_executable(radar_publisher ${RADAR_UNFILTER_SOURCE})
+ament_target_dependencies(radar_publisher rclcpp std_msgs sensor_msgs)
+target_link_libraries(radar_publisher ${extra_LIBRARIES} "${cpp_typesupport_target}")
+
+add_executable(radar_processor ${RADAR_FILTER_SOURCE})
+ament_target_dependencies(radar_processor rclcpp std_msgs sensor_msgs)
+target_link_libraries(radar_processor "${cpp_typesupport_target}")
+
+add_executable(radar_visualizer ${VIS_SOURCE})
+ament_target_dependencies(radar_visualizer rclcpp std_msgs sensor_msgs visualization_msgs geometry_msgs)
+target_link_libraries(radar_visualizer "${cpp_typesupport_target}")
+
+install(TARGETS
+  radar_publisher
+  radar_processor
+  radar_visualizer
+  DESTINATION lib/${PROJECT_NAME}
 )
 
-## Vars to build with
-set(extra_LIBRARIES -lpcap -lpthread) #Packet Cap, Capabilities, Mutexes
-set(CMAKE_CXX_FLAGS "-std=c++11 -w -g -O3 ${CMAKE_CXX_FLAGS}") #Ignore all warnings, debug flags, optimize
-set(RADAR_UNFILTER_SOURCE src/UnfilteredMain.cpp    src/parser.cpp          src/sniffer.cpp)
-set(RADAR_FILTER_SOURCE   src/radarPublisher.cpp    src/processPacket.cpp   src/FilteredMain.cpp)
-set(VIS_SOURCE            src/PointCloudConverter.cpp)
-set(MULTI_RADAR src/radarDetection.cpp)
-set(DBSCAN_SOURCE src/radar_clustering.cpp src/dbscan.cpp src/cluster.cpp src/point.cpp)
+install(DIRECTORY launch rviz
+  DESTINATION share/${PROJECT_NAME}
+)
 
-###########
-## Build ##
-###########
-
-## Specify additional locations of header files
-## Your package locations should be listed before other locations
-include_directories( include  ${catkin_INCLUDE_DIRS} )
-
-## Unfiltered Publisher
-add_executable(radar_publisher ${RADAR_UNFILTER_SOURCE}  )
-
-target_link_libraries(radar_publisher
-                      ${catkin_LIBRARIES}
-                      ${extra_LIBRARIES}
-                      )
-
-add_dependencies(radar_publisher radar_driver_generate_messages_cpp ${radar_driver_EXPORTED_TARGETS})
-
-## Filtered Publisher
-add_executable(radar_processor ${RADAR_FILTER_SOURCE}  )
-
-target_link_libraries(radar_processor
-                      ${catkin_LIBRARIES}
-                      ${extra_LIBRARIES}
-                      )
-
-add_dependencies(radar_processor radar_driver_generate_messages_cpp ${radar_driver_EXPORTED_TARGETS})
-
-## Point Cloud Generator
-add_executable(radar_visualizer ${VIS_SOURCE} )
-
-target_link_libraries(radar_visualizer ${catkin_LIBRARIES} )
-
-add_dependencies(radar_visualizer radar_driver_generate_messages_cpp ${radar_driver_EXPORTED_TARGETS})
-
-## Multi Radar Infrastructure
-add_executable(multi_radar ${MULTI_RADAR}  )
-
-target_link_libraries(multi_radar
-                      ${catkin_LIBRARIES}
-                      ${extra_LIBRARIES}
-                      )
-
-add_dependencies(multi_radar radar_driver_generate_messages_cpp ${radar_driver_EXPORTED_TARGETS})
-
-#RADAR POINTS TEST 
-add_executable(radar_points src/radar_point_detections.cpp)
-target_link_libraries(radar_points ${catkin_LIBRARIES})
-add_dependencies(radar_points radar_driver_generate_messages_cpp)
-
-#BOUNDING BOX RVIZ TEST
-add_executable(radar_clustering ${DBSCAN_SOURCE})
-target_link_libraries(radar_clustering ${catkin_LIBRARIES})
-add_dependencies(radar_clustering radar_driver_generate_messages_cpp)
-
+ament_package()

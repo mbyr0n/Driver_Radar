@@ -154,7 +154,7 @@ public:
 
     //publish message under new topic
     radar_driver::BoundingBoxList msg;
-    msg.boxes.resize(rawBoundingBoxes.size());
+    msg.boxes.reserve(rawBoundingBoxes.size());
 
     for (int i = 0; i < rawBoundingBoxes.size(); i++){
       //Transferring data from the cluster data type to pipeline message

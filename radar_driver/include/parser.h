@@ -11,11 +11,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "sniffer.h"
-#include "ros/ros.h"
-#include "ros/console.h"
+#include "rclcpp/rclcpp.hpp"
 
-/* Libpcap includes */
-#include <pcap.h>
+/* Network packet includes */
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -25,9 +23,9 @@
 #include <netinet/ip_icmp.h>
 
 /* ROS Messages */
-#include "radar_driver/RadarDetection.h"
-#include "radar_driver/RadarPacket.h"
-#include "radar_driver/SensorStatus.h"
+#include "radar_driver/msg/radar_detection.hpp"
+#include "radar_driver/msg/radar_packet.hpp"
+#include "radar_driver/msg/sensor_status.hpp"
 
 //Packet Cap Definitions: If we are using live capture or from pcap doc
 #define OFFLINE         0
@@ -194,16 +192,17 @@ typedef struct SSPacket {
 
 //Static # of near or far packets, dynamic # of detections per packet
 typedef struct PacketGroup {
-    radar_driver::RadarPacket   nearPackets[NUM_NEAR];
-    radar_driver::RadarPacket   farPackets[NUM_FAR];
+    radar_driver::msg::RadarPacket   nearPackets[NUM_NEAR];
+    radar_driver::msg::RadarPacket   farPackets[NUM_FAR];
     uint8_t numFarPackets;
     uint8_t numNearPackets;
 } PacketGroup_t;
 
-uint8_t parse_packet(udphdr_t* udphdr, unsigned char* packetptr); //Parser in parser.cpp
-void    initUnfilteredPublisher(ros::NodeHandle nh_new);
+uint8_t parse_packet(udphdr_t* udphdr, unsigned char* packetptr, size_t packetLen); //Parser in parser.cpp
+void    initUnfilteredPublisher(rclcpp::Node::SharedPtr nh_new);
+void    resetUnfilteredPublisher();
 void    publishRDIPacket(RDIPacket_t * packet);
-void    loadPacketMsg(RDIPacket_t * packet, radar_driver::RadarPacket * msg);
-void    loadSSMessage(SSPacket_t* packet, radar_driver::SensorStatus* msg);
+void    loadPacketMsg(RDIPacket_t * packet, radar_driver::msg::RadarPacket * msg);
+void    loadSSMessage(SSPacket_t* packet, radar_driver::msg::SensorStatus* msg);
 
 #endif /* PARSER_H */

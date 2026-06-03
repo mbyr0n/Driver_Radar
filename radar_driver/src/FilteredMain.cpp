@@ -1,11 +1,14 @@
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <getopt.h>
+#include <cstring>
 #include "radarPublisher.h"
 #include "processPacket.h"
+#include "radar_driver/msg/radar_packet.hpp"
 
 extern int opterr;
 
-PacketProcessor packetProcessor; 
+PacketProcessor packetProcessor;
+static rclcpp::Node::SharedPtr processorNode;
 
 void printUsage(char buff[]) {
   printf("\nUsage: %s [-h] [-n RADARNAME][-y UNFILTEREDTOPIC]\r\n", buff);
@@ -13,17 +16,24 @@ void printUsage(char buff[]) {
   printf("\tt: unfiltered topic name if reading (defaults: unfiltered_radar_packet\r\n");
 }
 
-void radarCallback(const radar_driver::RadarPacket::ConstPtr& msg) {
+static int getNonRosArgc(int argc, char** argv) {
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--ros-args") == 0) {
+      return i;
+    }
+  }
+  return argc;
+}
+
+void radarCallback(const radar_driver::msg::RadarPacket::SharedPtr msg) {
   uint8_t ret_status = packetProcessor.processRDIMsg(msg);
   std::string status_info = "";
 
-  // Most of our return statuses are of type ERR so make this the default verbosity level
   uint8_t log_verbosity = LOG_ERROR;
 
   switch(ret_status) {
     case NO_DETECTIONS:
       status_info = "No Detections";
-      // No detections isn't really a failure, so just issue a warning so that it gets logged somewhere
       log_verbosity = LOG_WARNING;
       break;
     case BAD_EVENT_ID:
@@ -41,15 +51,21 @@ void radarCallback(const radar_driver::RadarPacket::ConstPtr& msg) {
     case CLEAR_FAIL:
       status_info = "Failed to clear packets";
       break;
+    case PACKET_GROUP_FULL:
+      status_info = "Packet group full";
+      break;
     default:
-      // Assume default ret_value is success in which case don't log anything
       return;
   }
 
+  if (!processorNode) {
+    return;
+  }
+
   if (log_verbosity == LOG_WARNING) {
-    ROS_WARN_STREAM("radarCallback warning, unable to execute processRDIMsg. Cause: " << status_info);
+    RCLCPP_WARN(processorNode->get_logger(), "radarCallback warning, unable to execute processRDIMsg. Cause: %s", status_info.c_str());
   } else if (log_verbosity == LOG_ERROR) {
-    ROS_ERROR_STREAM("radarCallback ERROR, unable to execute processRDIMsg. Cause: " << status_info);
+    RCLCPP_ERROR(processorNode->get_logger(), "radarCallback ERROR, unable to execute processRDIMsg. Cause: %s", status_info.c_str());
   }
 }
 
@@ -57,24 +73,23 @@ int main(int argc, char** argv)
 {
   opterr = 0;
 
-  ros::init(argc, argv, "radar_processor");
-  ROS_INFO("Initialize radar processor");
   int c;
   uint8_t scanMode = 0;
   std::string unfiltered_topic = "unfiltered_radar_packet";
   std::string radar_name = "";
-  // Get the command line option, if any
-  while ((c = getopt (argc, argv, "+ht:s:")) != -1)
-  { //Pass remainder of arguments to the sniffer
+  int customArgc = getNonRosArgc(argc, argv);
+
+  optind = 1;
+  while ((c = getopt(customArgc, argv, "+ht:s:n:")) != -1)
+  {
     switch (c)
     {
       case 'h':
         printUsage(argv[0]);
-        exit(0);
-        break;
+        return 0;
       case 't':
         unfiltered_topic = std::string(optarg);
-        printf("Unfiltered topic: %s\r\n", unfiltered_topic);
+        printf("Unfiltered topic: %s\r\n", unfiltered_topic.c_str());
         break;
       case 's':
         scanMode = atoi(optarg);
@@ -86,28 +101,36 @@ int main(int argc, char** argv)
     }
   }
 
-  if (argc <= 1) {
-      ROS_INFO("Insufficient args\r\n");
+  if (customArgc <= 1) {
+      printf("Insufficient args\r\n");
       printUsage(argv[0]);
       return 0;
   }
 
   if (scanMode > 2) {
-      ROS_INFO("Scan Mode must be 0,1,2\r\n");
+      printf("Scan Mode must be 0,1,2\r\n");
       printUsage(argv[0]);
       return 0;
   }
 
-  ros::NodeHandle nh;
-  RadarPublisher rp(nh);
-  ros::Subscriber radarUnfilteredSub;
+  rclcpp::init(argc, argv);
+  processorNode = std::make_shared<rclcpp::Node>("radar_processor");
+  RCLCPP_INFO(processorNode->get_logger(), "Initialize radar processor");
+
+  RadarPublisher rp(processorNode);
+  rclcpp::Subscription<radar_driver::msg::RadarPacket>::SharedPtr radarUnfilteredSub;
 
   if (!packetProcessor.initializePacketProcessor(&rp, scanMode)) {
-    radarUnfilteredSub = nh.subscribe(unfiltered_topic, 100, radarCallback);
-    ros::spin();
+    radarUnfilteredSub = processorNode->create_subscription<radar_driver::msg::RadarPacket>(
+      unfiltered_topic,
+      100,
+      radarCallback
+    );
+    rclcpp::spin(processorNode);
   } else {
-    ROS_INFO("Failed to setup processor\r\n");
+    RCLCPP_INFO(processorNode->get_logger(), "Failed to setup processor");
   }
 
+  rclcpp::shutdown();
   return 0;
 }

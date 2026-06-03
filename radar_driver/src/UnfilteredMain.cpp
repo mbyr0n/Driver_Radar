@@ -1,5 +1,6 @@
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <getopt.h>
+#include <cstring>
 #include "parser.h"
 
 extern int opterr;
@@ -14,28 +15,41 @@ void printUsage(char buff[]) {
   printf("\tl: file path to captured data (string), required for OFFLINE capture\n");
 }
 
+static int getNonRosArgc(int argc, char** argv) {
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--ros-args") == 0) {
+      return i;
+    }
+  }
+  return argc;
+}
+
 int main(int argc, char** argv)
 {
   opterr = 0;
-  ros::init(argc, argv, "radar_publisher");
-  ROS_INFO("Initialize radar parser");
-  char interface[16] = ""; //Which network interface (combination of port & IP) are we reading from?
-  char filter[256] = ""; //What simple packet filters are we applying?
-  int packets = 0, c, port = 31122; //Radar Default
-  int capture_live = 1; //Based on if we're using live capture or from offline pcap doc
-  char capture_path[256]  = ""; //File path to pcap doc if using offline capture
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<rclcpp::Node>("radar_publisher");
+  RCLCPP_INFO(node->get_logger(), "Initialize radar parser");
 
-  // Get the command line option, if any
-  while ((c = getopt (argc, argv, "+hp:e:n:c:l:f:")) != -1)
-  { //Pass remainder of arguments to the sniffer
+  char interface[16] = "";
+  char filter[256] = "";
+  int packets = 0, c, port = 31122;
+  int capture_live = 1;
+  char capture_path[256] = "";
+  int customArgc = getNonRosArgc(argc, argv);
+
+  optind = 1;
+  while ((c = getopt(customArgc, argv, "+hp:e:n:c:l:f:")) != -1)
+  {
     switch (c)
     {
       case 'h':
         printUsage(argv[0]);
-        exit(0);
-        break;
+        rclcpp::shutdown();
+        return 0;
       case 'e':
-        strcpy(interface, optarg);
+        strncpy(interface, optarg, sizeof(interface) - 1);
+        interface[sizeof(interface) - 1] = '\0';
         printf("INTERFACE: %s\r\n", optarg);
         break;
       case 'n':
@@ -50,19 +64,22 @@ int main(int argc, char** argv)
         printf("CAPTURE: %d\r\n", capture_live);
         break;
       case 'l':
-        strcpy(capture_path, optarg);
+        strncpy(capture_path, optarg, sizeof(capture_path) - 1);
+        capture_path[sizeof(capture_path) - 1] = '\0';
         printf("CAPTURE_PATH: %s\r\n", capture_path);
         break;
-      case 'f': //Optional Flag
-        strcpy(filter, optarg);
+      case 'f':
+        strncpy(filter, optarg, sizeof(filter) - 1);
+        filter[sizeof(filter) - 1] = '\0';
         printf("FILTER: %s\r\n", filter);
         break;
     }
   }
 
-  if (argc <= 1) {
-      ROS_INFO("Insufficient args\r\n");
+  if (customArgc <= 1) {
+      RCLCPP_INFO(node->get_logger(), "Insufficient args");
       printUsage(argv[0]);
+      rclcpp::shutdown();
       return 0;
   }
 
@@ -72,14 +89,15 @@ int main(int argc, char** argv)
     printf("RUNNING OFFLINE\r\n");
   } else {
     printf("Bad capture option, Definition in parser.h\r\n");
+    rclcpp::shutdown();
     return 0;
   }
-  
-  ros::NodeHandle nh;
-  initUnfilteredPublisher(nh); 
-  
+
+  initUnfilteredPublisher(node);
+
   run(port, packets, interface, filter, capture_live, capture_path);
-  ros::spin();
-  
+  resetUnfilteredPublisher();
+  rclcpp::shutdown();
+
   return 0;
 }

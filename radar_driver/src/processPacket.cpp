@@ -14,12 +14,11 @@
 static PacketGroup_t EmptyPackets; //Local static only, Cleanup struct
 
 //Some local functions
-bool loadRDIMessageFromPacket(radar_driver::RadarPacket* newMsg, const radar_driver::RadarPacket::ConstPtr& oldMsg);
-void loadSSMessage(radar_driver::SensorStatus* msg, SSPacket_t* packet);
+bool loadRDIMessageFromPacket(radar_driver::msg::RadarPacket* newMsg, const radar_driver::msg::RadarPacket::SharedPtr oldMsg);
+void loadSSMessage(radar_driver::msg::SensorStatus* msg, SSPacket_t* packet);
 
 PacketProcessor::PacketProcessor() {
     Mutex = PTHREAD_MUTEX_INITIALIZER; //Non recursive
-    PacketsBuffer[2]; //Init Double Buffer
     Publisher = NULL; //Publisher object for callback
     publish = false; //Publishing flag
     curNearTimeStamp = 0, curFarTimeStamp = 0;
@@ -46,20 +45,21 @@ uint8_t PacketProcessor::initializePacketProcessor(RadarPublisher* newPublisher,
     return SUCCESS;
 }
 
-uint8_t PacketProcessor::processRDIMsg(const radar_driver::RadarPacket::ConstPtr& packet) {
-    if ( packet->Detections.size() < 1 ){
+uint8_t PacketProcessor::processRDIMsg(const radar_driver::msg::RadarPacket::SharedPtr packet) {
+    if ( packet->detections.size() < 1 ){
         return NO_DETECTIONS;
     }
 
     //Only mutex here b/c not using the Packets struct yet
     pthread_mutex_lock(&Mutex);
 
-    if(packet->EventID == FAR1 || packet->EventID == FAR0) {
+    if(packet->event_id == FAR1 || packet->event_id == FAR0) {
         if (scanMode != NEAR_SCAN) {
             if (curFarTimeStamp == 0){ //Init Case
-                curFarTimeStamp = packet->TimeStamp;
-            } else if (curFarTimeStamp != packet->TimeStamp) { //New timestamp
+                curFarTimeStamp = packet->time_stamp;
+            } else if (curFarTimeStamp != packet->time_stamp) { //New timestamp
                 curFarIdx = (curFarIdx + 1) % 2;
+                curFarTimeStamp = packet->time_stamp;
 
                 if (scanMode == FAR_SCAN || curFarIdx == curNearIdx) { //Indexes are the same
                     // We just got a new TS for both near & far, so we should publish the old buffer
@@ -68,6 +68,11 @@ uint8_t PacketProcessor::processRDIMsg(const radar_driver::RadarPacket::ConstPtr
             }
 
             PacketGroup_t * curGroup = &PacketsBuffer[curFarIdx]; //Tmp to make code easier to read
+            if (curGroup->numFarPackets >= NUM_FAR) {
+                pthread_mutex_unlock(&Mutex);
+                return PACKET_GROUP_FULL;
+            }
+
             if (loadRDIMessageFromPacket(&curGroup->farPackets[curGroup->numFarPackets], packet)) {
                 curGroup->numFarPackets++;
             }
@@ -79,12 +84,13 @@ uint8_t PacketProcessor::processRDIMsg(const radar_driver::RadarPacket::ConstPtr
                 return err;
             }
         }
-    } else if (packet->EventID == NEAR0 || packet->EventID == NEAR1 || packet->EventID == NEAR2) {
+    } else if (packet->event_id == NEAR0 || packet->event_id == NEAR1 || packet->event_id == NEAR2) {
         if (scanMode != FAR_SCAN) {
             if (curNearTimeStamp == 0){ //Init Case
-                curNearTimeStamp = packet->TimeStamp;
-            } else if (curNearTimeStamp != packet->TimeStamp) { //New timestamp
+                curNearTimeStamp = packet->time_stamp;
+            } else if (curNearTimeStamp != packet->time_stamp) { //New timestamp
                 curNearIdx = (curNearIdx + 1) % 2;
+                curNearTimeStamp = packet->time_stamp;
 
                 if (scanMode == NEAR_SCAN || curNearIdx == curFarIdx) { //Indexes are the same
                     // We just got a new TS for both near & far, so we should publish the old buffer
@@ -93,6 +99,11 @@ uint8_t PacketProcessor::processRDIMsg(const radar_driver::RadarPacket::ConstPtr
             }
 
             PacketGroup_t* curGroup = &PacketsBuffer[curNearIdx]; //Tmp to make code easier to read
+            if (curGroup->numNearPackets >= NUM_NEAR) {
+                pthread_mutex_unlock(&Mutex);
+                return PACKET_GROUP_FULL;
+            }
+
             if (loadRDIMessageFromPacket(&curGroup->nearPackets[curGroup->numNearPackets], packet)) {
                 curGroup->numNearPackets++;
             }
@@ -120,15 +131,15 @@ uint8_t PacketProcessor::processRDIMsg(const radar_driver::RadarPacket::ConstPtr
 */
 uint8_t PacketProcessor::processSSPacket(SSPacket_t* packet) {
     // TODO: Raise an alarm on the dashboard with error info.
-    if (packet->Defective && DEFECTIVE_HW) {
+    if (packet->Defective & DEFECTIVE_HW) {
         return SS_DEFECTIVE_HW;
-    } else if (packet->BadSupplyVolt && BAD_VOLTAGE) {
+    } else if (packet->BadSupplyVolt & BAD_VOLTAGE) {
         return SS_BAD_VOLT;
-    } else if (packet->BadTemp && BAD_TEMP) {
+    } else if (packet->BadTemp & BAD_TEMP) {
         return SS_BAD_TEMP;
-    } else if (packet->GmMissing && GM_MISSING) {
+    } else if (packet->GmMissing & GM_MISSING) {
         return SS_GM_MISSING;
-    } else if (packet->TxPowerStatus && POWER_REDUCED) {
+    } else if (packet->TxPowerStatus & POWER_REDUCED) {
         return SS_PWR_REDUCED;
     }
     pthread_mutex_lock(&Mutex);
@@ -191,96 +202,96 @@ uint8_t PacketProcessor::clearAllPackets() {
     return SUCCESS;
 }
 
-bool loadRDIMessageFromPacket(radar_driver::RadarPacket* newMsg, const radar_driver::RadarPacket::ConstPtr& oldMsg) {
-    newMsg->EventID                    = oldMsg->EventID;
-    newMsg->TimeStamp                  = oldMsg->TimeStamp;
-    newMsg->MeasurementCounter         = oldMsg->MeasurementCounter;
-    newMsg->Vambig                     = oldMsg->Vambig;
-    newMsg->CenterFrequency            = oldMsg->CenterFrequency;
-    newMsg->Detections.clear();
+bool loadRDIMessageFromPacket(radar_driver::msg::RadarPacket* newMsg, const radar_driver::msg::RadarPacket::SharedPtr oldMsg) {
+    newMsg->event_id                    = oldMsg->event_id;
+    newMsg->time_stamp                  = oldMsg->time_stamp;
+    newMsg->measurement_counter         = oldMsg->measurement_counter;
+    newMsg->vambig                      = oldMsg->vambig;
+    newMsg->center_frequency            = oldMsg->center_frequency;
+    newMsg->detections.clear();
 
-    for(uint8_t i = 0; i < oldMsg->Detections.size(); i++) {
+    for(uint8_t i = 0; i < oldMsg->detections.size(); i++) {
 
         // TODO: Figure out an SNR threshold value that actually works here.
-        if (oldMsg->Detections[i].SNR < SNR_THRESHOLD) { // Too much noise; drop detection.
+        if (oldMsg->detections[i].snr < SNR_THRESHOLD) { // Too much noise; drop detection.
             continue;
-        } else if (abs(oldMsg->Detections[i].VrelRad) < VELOCITY_LOWER_THRESHOLD) {
+        } else if (abs(oldMsg->detections[i].vrel_rad) < VELOCITY_LOWER_THRESHOLD) {
             continue;
-        } else if (oldMsg->Detections[i].posX > DISTANCE_MAX_THRESHOLD) { // need to do trig
+        } else if (oldMsg->detections[i].pos_x > DISTANCE_MAX_THRESHOLD) { // need to do trig
             continue;
-        } else if (oldMsg->Detections[i].posX < DISTANCE_MIN_THRESHOLD) {
+        } else if (oldMsg->detections[i].pos_x < DISTANCE_MIN_THRESHOLD) {
             continue;
-        } else if (oldMsg->Detections[i].RCS0 > RCS_THRESHOLD) {
+        } else if (oldMsg->detections[i].rcs0 > RCS_THRESHOLD) {
             continue;
-        } else if (oldMsg->EventID == FAR1 || oldMsg->EventID == FAR0) {
+        } else if (oldMsg->event_id == FAR1 || oldMsg->event_id == FAR0) {
             //limit far scan to 9 degrees, according to conti
-            if (oldMsg->Detections[i].AzAng0 < -0.15708 || oldMsg->Detections[i].AzAng1 > 0.15708) {
+            if (oldMsg->detections[i].az_ang0 < -0.15708 || oldMsg->detections[i].az_ang1 > 0.15708) {
                 continue;
             }
-        } else if(oldMsg->Detections[i].AzAng0 < AZI_ANGLE_0_THRESHOLD || oldMsg->Detections[i].AzAng1 > AZI_ANGLE_1_THRESHOLD){
+        } else if(oldMsg->detections[i].az_ang0 < AZI_ANGLE_0_THRESHOLD || oldMsg->detections[i].az_ang1 > AZI_ANGLE_1_THRESHOLD){
             continue;
         }
 
-        radar_driver::RadarDetection data;
+        radar_driver::msg::RadarDetection data;
 
         // Copy all data from old message detection to new message
 
-        data.Pdh0          = oldMsg->Detections[i].Pdh0;
+        data.pdh0          = oldMsg->detections[i].pdh0;
 
-        data.AzAng0        = oldMsg->Detections[i].AzAng0;
-        data.RCS0          = oldMsg->Detections[i].RCS0;
-        data.AzAngVar0     = oldMsg->Detections[i].AzAngVar0;
-        data.Prob0         = oldMsg->Detections[i].Prob0;
+        data.az_ang0       = oldMsg->detections[i].az_ang0;
+        data.rcs0          = oldMsg->detections[i].rcs0;
+        data.az_ang_var0   = oldMsg->detections[i].az_ang_var0;
+        data.prob0         = oldMsg->detections[i].prob0;
 
-        data.AzAng1        = oldMsg->Detections[i].AzAng1;
-        data.RCS1          = oldMsg->Detections[i].RCS1;
-        data.AzAngVar1     = oldMsg->Detections[i].AzAngVar1;
-        data.Prob1         = oldMsg->Detections[i].Prob1;
+        data.az_ang1       = oldMsg->detections[i].az_ang1;
+        data.rcs1          = oldMsg->detections[i].rcs1;
+        data.az_ang_var1   = oldMsg->detections[i].az_ang_var1;
+        data.prob1         = oldMsg->detections[i].prob1;
 
-        data.VrelRad      = oldMsg->Detections[i].VrelRad;
-        data.ElAng        = oldMsg->Detections[i].ElAng;
-        data.RangeVar     = oldMsg->Detections[i].RangeVar;
-        data.VrelRadVar   = oldMsg->Detections[i].VrelRadVar;
-        data.ElAngVar     = oldMsg->Detections[i].ElAngVar;
-        data.SNR          = oldMsg->Detections[i].SNR;
-        data.Range        = oldMsg->Detections[i].Range;
+        data.vrel_rad     = oldMsg->detections[i].vrel_rad;
+        data.el_ang       = oldMsg->detections[i].el_ang;
+        data.range_var    = oldMsg->detections[i].range_var;
+        data.vrel_rad_var = oldMsg->detections[i].vrel_rad_var;
+        data.el_ang_var   = oldMsg->detections[i].el_ang_var;
+        data.snr          = oldMsg->detections[i].snr;
+        data.range        = oldMsg->detections[i].range;
 
-        data.posX = oldMsg->Detections[i].posX;
-        data.posY = oldMsg->Detections[i].posY;
-        data.posZ = oldMsg->Detections[i].posZ;
+        data.pos_x = oldMsg->detections[i].pos_x;
+        data.pos_y = oldMsg->detections[i].pos_y;
+        data.pos_z = oldMsg->detections[i].pos_z;
 
-        newMsg->Detections.push_back(data);
+        newMsg->detections.push_back(data);
     }
 
     // Return true if there is at least one detection in newMsg after filtering
-    return (newMsg->Detections.size() > 0);
+    return (newMsg->detections.size() > 0);
 }
 
 /* Load SS ROS Message
 * -- Local Function, not in class definition
 */
-void loadSSMessage(radar_driver::SensorStatus* msg, SSPacket_t* packet) {
-    msg->PartNumber             = packet->PartNumber;
-    msg->AssemblyPartNumber     = packet->AssemblyPartNumber;
-    msg->SWPartNumber           = packet->SWPartNumber;
+void loadSSMessage(radar_driver::msg::SensorStatus* msg, SSPacket_t* packet) {
+    msg->part_number            = packet->PartNumber;
+    msg->assembly_part_number   = packet->AssemblyPartNumber;
+    msg->sw_part_number         = packet->SWPartNumber;
     for (uint8_t i = 0; i < SENSOR_SERIAL_NUM_LEN; i++) {
-        msg->SerialNumber[i]    = packet->SerialNumber[i]; //Should work for a boost::array object
+        msg->serial_number[i]   = packet->SerialNumber[i];
     }
-    msg->BLVersion              = packet->BLVersion;
-    msg->SWVersion              = packet->SWVersion;
-    msg->UTCTimeStamp           = packet->UTCTimeStamp;
-    msg->TimeStamp              = packet->TimeStamp;
-    msg->SurfaceDamping         = packet->SurfaceDamping;
-    msg->OpState                = packet->OpState;
-    msg->CurrentFarCF           = packet->CurrentFarCF;
-    msg->CurrentNearCF          = packet->CurrentNearCF;
-    msg->Defective              = packet->Defective;
-    msg->BadSupplyVolt          = packet->BadSupplyVolt;
-    msg->BadTemp                = packet->BadTemp;
-    msg->GmMissing              = packet->GmMissing;
-    msg->TxPowerStatus          = packet->TxPowerStatus;
-    msg->MaximumRangeFar        = packet->MaxRangeFar;
-    msg->MaximumRangeNear       = packet->MaxRangeNear;
+    msg->bl_version             = packet->BLVersion;
+    msg->sw_version             = packet->SWVersion;
+    msg->utc_time_stamp         = packet->UTCTimeStamp;
+    msg->time_stamp             = packet->TimeStamp;
+    msg->surface_damping        = packet->SurfaceDamping;
+    msg->op_state               = packet->OpState;
+    msg->current_far_cf         = packet->CurrentFarCF;
+    msg->current_near_cf        = packet->CurrentNearCF;
+    msg->defective              = packet->Defective;
+    msg->bad_supply_volt        = packet->BadSupplyVolt;
+    msg->bad_temp               = packet->BadTemp;
+    msg->gm_missing             = packet->GmMissing;
+    msg->tx_power_status        = packet->TxPowerStatus;
+    msg->maximum_range_far      = packet->MaxRangeFar;
+    msg->maximum_range_near     = packet->MaxRangeNear;
 }
 /* Set ROS publisher callback
 */
@@ -296,59 +307,60 @@ void PacketProcessor::printPacketGroup(uint8_t idx) {
     pthread_mutex_lock(&Mutex);
     if (idx >= 2) {
         printf("Improper Idx Given: %u\r\n", idx);
+        pthread_mutex_unlock(&Mutex);
         return;
     }
     PacketGroup_t * Packets = &PacketsBuffer[idx];
 
     for (uint8_t j = 0; j < Packets->numFarPackets; j++) {
-        printf("\nPROC:Far Packet: %d, len: %u\n", j, Packets->farPackets[j].Detections.size());
-        for(uint8_t i = 0; i < Packets->farPackets[j].Detections.size(); i++) {
+        printf("\nPROC:Far Packet: %d, len: %u\n", j, static_cast<unsigned>(Packets->farPackets[j].detections.size()));
+        for(uint8_t i = 0; i < Packets->farPackets[j].detections.size(); i++) {
             printf("PROC:RDI Idx: %d \n"    , i);
-            printf("PROC:posX %f \n"        , Packets->farPackets[j].Detections[i].posX);
-            printf("PROC:posY %f \n"        , Packets->farPackets[j].Detections[i].posY);
-            printf("PROC:posZ %f \n"        , Packets->farPackets[j].Detections[i].posZ);
-            printf("PROC:VrelRad %f \n"     , Packets->farPackets[j].Detections[i].VrelRad);
-            printf("PROC:AzAng0 %f \n"       , Packets->farPackets[j].Detections[i].AzAng0);
-            printf("PROC:AzAng1 %f \n"       , Packets->farPackets[j].Detections[i].AzAng1);
-            printf("PROC:ElAng %f \n"       , Packets->farPackets[j].Detections[i].ElAng);
-            printf("PROC:RCS0 %f \n"         , Packets->farPackets[j].Detections[i].RCS0);
-            printf("PROC:RCS1 %f \n"         , Packets->farPackets[j].Detections[i].RCS1);
-            printf("PROC:RangeVar %f \n"    , Packets->farPackets[j].Detections[i].RangeVar);
-            printf("PROC:VrelRadVar %f \n"  , Packets->farPackets[j].Detections[i].VrelRadVar);
-            printf("PROC:AzAngVar0 %f \n"    , Packets->farPackets[j].Detections[i].AzAngVar0);
-            printf("PROC:AzAngVar1 %f \n"    , Packets->farPackets[j].Detections[i].AzAngVar1);
-            printf("PROC:ElAngVar %f \n"    , Packets->farPackets[j].Detections[i].ElAngVar);
-            printf("PROC:Prob0 %f \n"       , Packets->farPackets[j].Detections[i].Prob0);
-            printf("PROC:Prob1 %f \n"       , Packets->farPackets[j].Detections[i].Prob1);
-            printf("PROC:SNR %f \n"         , Packets->farPackets[j].Detections[i].SNR);
+            printf("PROC:posX %f \n"        , Packets->farPackets[j].detections[i].pos_x);
+            printf("PROC:posY %f \n"        , Packets->farPackets[j].detections[i].pos_y);
+            printf("PROC:posZ %f \n"        , Packets->farPackets[j].detections[i].pos_z);
+            printf("PROC:VrelRad %f \n"     , Packets->farPackets[j].detections[i].vrel_rad);
+            printf("PROC:AzAng0 %f \n"      , Packets->farPackets[j].detections[i].az_ang0);
+            printf("PROC:AzAng1 %f \n"      , Packets->farPackets[j].detections[i].az_ang1);
+            printf("PROC:ElAng %f \n"       , Packets->farPackets[j].detections[i].el_ang);
+            printf("PROC:RCS0 %f \n"        , Packets->farPackets[j].detections[i].rcs0);
+            printf("PROC:RCS1 %f \n"        , Packets->farPackets[j].detections[i].rcs1);
+            printf("PROC:RangeVar %f \n"    , Packets->farPackets[j].detections[i].range_var);
+            printf("PROC:VrelRadVar %f \n"  , Packets->farPackets[j].detections[i].vrel_rad_var);
+            printf("PROC:AzAngVar0 %f \n"   , Packets->farPackets[j].detections[i].az_ang_var0);
+            printf("PROC:AzAngVar1 %f \n"   , Packets->farPackets[j].detections[i].az_ang_var1);
+            printf("PROC:ElAngVar %f \n"    , Packets->farPackets[j].detections[i].el_ang_var);
+            printf("PROC:Prob0 %f \n"       , Packets->farPackets[j].detections[i].prob0);
+            printf("PROC:Prob1 %f \n"       , Packets->farPackets[j].detections[i].prob1);
+            printf("PROC:SNR %f \n"         , Packets->farPackets[j].detections[i].snr);
             printf("\n");
         }
     }
 
     for (uint8_t j = 0; j < Packets->numNearPackets; j++) {
-        printf("PROC:Near Packet: %d, len: %u\n", j, Packets->nearPackets[j].Detections.size());
-        for(uint8_t i = 0; i < Packets->nearPackets[j].Detections.size(); i++) {
+        printf("PROC:Near Packet: %d, len: %u\n", j, static_cast<unsigned>(Packets->nearPackets[j].detections.size()));
+        for(uint8_t i = 0; i < Packets->nearPackets[j].detections.size(); i++) {
             printf("PROC:RDI Idx: %d \n"    , i);
-            printf("PROC:posX %f \n"        , Packets->nearPackets[j].Detections[i].posX);
-            printf("PROC:posY %f \n"        , Packets->nearPackets[j].Detections[i].posY);
-            printf("PROC:posZ %f \n"        , Packets->nearPackets[j].Detections[i].posZ);
-            printf("PROC:VrelRad %f \n"     , Packets->nearPackets[j].Detections[i].VrelRad);
-            printf("PROC:AzAng0 %f \n"       , Packets->nearPackets[j].Detections[i].AzAng0);
-            printf("PROC:AzAng1 %f \n"       , Packets->nearPackets[j].Detections[i].AzAng1);
-            printf("PROC:ElAng %f \n"       , Packets->nearPackets[j].Detections[i].ElAng);
-            printf("PROC:RCS0 %f \n"         , Packets->nearPackets[j].Detections[i].RCS0);
-            printf("PROC:RCS1 %f \n"         , Packets->nearPackets[j].Detections[i].RCS1);
-            printf("PROC:RangeVar %f \n"    , Packets->nearPackets[j].Detections[i].RangeVar);
-            printf("PROC:VrelRadVar %f \n"  , Packets->nearPackets[j].Detections[i].VrelRadVar);
-            printf("PROC:AzAngVar0 %f \n"    , Packets->nearPackets[j].Detections[i].AzAngVar0);
-            printf("PROC:AzAngVar1 %f \n"    , Packets->nearPackets[j].Detections[i].AzAngVar1);
-            printf("PROC:ElAngVar %f \n"    , Packets->nearPackets[j].Detections[i].ElAngVar);
-            printf("PROC:Prob0 %f \n"       , Packets->nearPackets[j].Detections[i].Prob0);
-            printf("PROC:Prob1 %f \n"       , Packets->nearPackets[j].Detections[i].Prob1);
-            printf("PROC:SNR %f \n"         , Packets->nearPackets[j].Detections[i].SNR);
+            printf("PROC:posX %f \n"        , Packets->nearPackets[j].detections[i].pos_x);
+            printf("PROC:posY %f \n"        , Packets->nearPackets[j].detections[i].pos_y);
+            printf("PROC:posZ %f \n"        , Packets->nearPackets[j].detections[i].pos_z);
+            printf("PROC:VrelRad %f \n"     , Packets->nearPackets[j].detections[i].vrel_rad);
+            printf("PROC:AzAng0 %f \n"      , Packets->nearPackets[j].detections[i].az_ang0);
+            printf("PROC:AzAng1 %f \n"      , Packets->nearPackets[j].detections[i].az_ang1);
+            printf("PROC:ElAng %f \n"       , Packets->nearPackets[j].detections[i].el_ang);
+            printf("PROC:RCS0 %f \n"        , Packets->nearPackets[j].detections[i].rcs0);
+            printf("PROC:RCS1 %f \n"        , Packets->nearPackets[j].detections[i].rcs1);
+            printf("PROC:RangeVar %f \n"    , Packets->nearPackets[j].detections[i].range_var);
+            printf("PROC:VrelRadVar %f \n"  , Packets->nearPackets[j].detections[i].vrel_rad_var);
+            printf("PROC:AzAngVar0 %f \n"   , Packets->nearPackets[j].detections[i].az_ang_var0);
+            printf("PROC:AzAngVar1 %f \n"   , Packets->nearPackets[j].detections[i].az_ang_var1);
+            printf("PROC:ElAngVar %f \n"    , Packets->nearPackets[j].detections[i].el_ang_var);
+            printf("PROC:Prob0 %f \n"       , Packets->nearPackets[j].detections[i].prob0);
+            printf("PROC:Prob1 %f \n"       , Packets->nearPackets[j].detections[i].prob1);
+            printf("PROC:SNR %f \n"         , Packets->nearPackets[j].detections[i].snr);
             printf("\n");
         }
     }
 
-    pthread_mutex_lock(&Mutex);
+    pthread_mutex_unlock(&Mutex);
 }

@@ -28,14 +28,19 @@ pcap_t* open_pcap_socket(char* device, const char* bpfstr)
 {
     char errbuf[PCAP_ERRBUF_SIZE]; //General buffer for error messages
     pcap_t* pd;
-    uint32_t  srcip, netmask;
-    struct bpf_program  bpf;
+    uint32_t srcip, netmask;
+    struct bpf_program bpf;
 
     // If no network interface (device) is specfied, get the first one.
-    if (!*device && !(device = pcap_lookupdev(errbuf)))
-    {
-        printf("pcap_lookupdev(): %s\n", errbuf);
-        return NULL;
+    if (!*device) {
+        pcap_if_t* devices = NULL;
+        if (pcap_findalldevs(&devices, errbuf) < 0 || devices == NULL) {
+            printf("pcap_findalldevs(): %s\n", errbuf);
+            return NULL;
+        }
+        strncpy(device, devices->name, 15);
+        device[15] = '\0';
+        pcap_freealldevs(devices);
     }
 
     printf("Using network Interface: %s\n", device);
@@ -71,8 +76,10 @@ pcap_t* open_pcap_socket(char* device, const char* bpfstr)
     if (pcap_setfilter(pd, &bpf) < 0)
     {
         printf("pcap_setfilter(): %s\n", pcap_geterr(pd));
+        pcap_freecode(&bpf);
         return NULL;
     }
+    pcap_freecode(&bpf);
 
     return pd;
 }
@@ -81,8 +88,6 @@ pcap_t* open_pcap_file(const char* filename)
 {
     char errbuf[PCAP_ERRBUF_SIZE]; //General buffer for error messages
     pcap_t* pd;
-    uint32_t  srcip, netmask;
-    struct bpf_program  bpf;
 
     // Open the device for pcap readout
     if ((pd = pcap_open_offline_with_tstamp_precision(filename, PCAP_TSTAMP_PRECISION_MICRO, errbuf)) == NULL) //BUFSIZ = 8192 bytes
@@ -150,14 +155,32 @@ void capture_loop(pcap_t* pd, int packets, pcap_handler func, int capture_live, 
 void receive_packet(u_char *user, struct pcap_pkthdr *packethdr, 
                   u_char *packetptr)
 {
+    (void)user;
     struct ip* iphdr;
     struct udphdr* udphdr;
     char iphdrInfo[256], srcip[256], dstip[256];
-    unsigned short id, seq;
  
     // Skip the datalink layer header and get the IP header fields.
+    if (packethdr->caplen < static_cast<bpf_u_int32>(linkhdrlen + sizeof(struct ip))) {
+        return;
+    }
+
     packetptr += linkhdrlen; //Forward packet pointer past datalink layer header
     iphdr = (struct ip*)packetptr; //Load into iphdr struct
+    size_t remainingLen = packethdr->caplen - linkhdrlen;
+    size_t ipHeaderLen = 4 * iphdr->ip_hl;
+    size_t ipPacketLen = ntohs(iphdr->ip_len);
+    if (ipHeaderLen < sizeof(struct ip) || ipPacketLen < ipHeaderLen) {
+        return;
+    }
+
+    if (remainingLen > ipPacketLen) {
+        remainingLen = ipPacketLen;
+    }
+
+    if (remainingLen < ipHeaderLen + sizeof(struct udphdr)) {
+        return;
+    }
     strcpy(srcip, inet_ntoa(iphdr->ip_src));
     strcpy(dstip, inet_ntoa(iphdr->ip_dst));
     sprintf(iphdrInfo, "ID:%d TOS:0x%x, TTL:%d IpLen:%d DgLen:%d",
@@ -166,17 +189,19 @@ void receive_packet(u_char *user, struct pcap_pkthdr *packethdr,
  
     // Advance to the transport layer header then parse and display
     // the fields based on the type of hearder: tcp, udp or icmp.
-    packetptr += 4*iphdr->ip_hl;
+    packetptr += ipHeaderLen;
+    remainingLen -= ipHeaderLen;
     if (iphdr->ip_p != IPPROTO_UDP) {
         return; //Actually skip it
     } else {
         udphdr = (struct udphdr*)packetptr; //Load into UDP hdr struct
-        parse_packet(udphdr, packetptr); //Pass of to our parser
+        parse_packet(udphdr, packetptr, remainingLen); //Pass of to our parser
     }
 }
 
 void bailout(int signo)
 {
+    (void)signo;
     struct pcap_stat stats;
  
     if (pcap_stats(pd, &stats) >= 0)

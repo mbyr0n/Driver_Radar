@@ -1,42 +1,43 @@
 #include "radarPublisher.h"
-#include "ros/ros.h"
+#include "rclcpp/rclcpp.hpp"
 #include <stdio.h>
 #include <stdlib.h>
 
 //msgs
-#include "std_msgs/String.h"
-#include "radar_driver/EthCfg.h"
-#include "radar_driver/RadarDetection.h"
-#include "radar_driver/RadarPacket.h"
-#include "radar_driver/SensorCfg.h"
-#include "radar_driver/SensorStatus.h"
+#include "std_msgs/msg/string.hpp"
+#include "radar_driver/msg/eth_cfg.hpp"
+#include "radar_driver/msg/radar_detection.hpp"
+#include "radar_driver/msg/radar_packet.hpp"
+#include "radar_driver/msg/sensor_cfg.hpp"
+#include "radar_driver/msg/sensor_status.hpp"
 
 //#define PRINT_PUBLISHER
 
-RadarPublisher::RadarPublisher (ros::NodeHandle nh_)
+RadarPublisher::RadarPublisher (rclcpp::Node::SharedPtr nh_)
+  : nh_(nh_)
 {
-  packet_pub_  = nh_.advertise<radar_driver::RadarPacket>(std::string("filtered_radar_packet"), 50);
+  packet_pub_ = nh_->create_publisher<radar_driver::msg::RadarPacket>("filtered_radar_packet", 50);
 }
 
-void RadarPublisher::publishRadarPacketMsg(radar_driver::RadarPacket& radar_packet_msg)
+void RadarPublisher::publishRadarPacketMsg(radar_driver::msg::RadarPacket& radar_packet_msg)
 {
-  return packet_pub_.publish(radar_packet_msg);
+  packet_pub_->publish(radar_packet_msg);
 }
 
-void RadarPublisher::publishRadarDetectionMsg(radar_driver::RadarDetection& radar_detection_msg)
+void RadarPublisher::publishRadarDetectionMsg(radar_driver::msg::RadarDetection& radar_detection_msg)
 {
-  return detection_pub_.publish(radar_detection_msg);
+  detection_pub_->publish(radar_detection_msg);
 }
 
 uint8_t RadarPublisher::pubCallback(PacketGroup_t* Packets) {   //call upon the appropriate publish function
   for (uint8_t i = 0; i < Packets->numFarPackets; i++) {
     this->publishRadarPacketMsg(Packets->farPackets[i]);
-    ROS_INFO_STREAM("Far packet timestamp: " << std::to_string((Packets->farPackets[i]).TimeStamp));
+    RCLCPP_INFO(nh_->get_logger(), "Far packet timestamp: %u", (Packets->farPackets[i]).time_stamp);
   }
 
   for (uint8_t i = 0; i < Packets->numNearPackets; i++) {
     this->publishRadarPacketMsg(Packets->nearPackets[i]);
-    ROS_INFO_STREAM("Near packet timestamp: " << std::to_string((Packets->nearPackets[i]).TimeStamp));
+    RCLCPP_INFO(nh_->get_logger(), "Near packet timestamp: %u", (Packets->nearPackets[i]).time_stamp);
   }
 
   return SUCCESS;

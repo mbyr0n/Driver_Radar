@@ -8,6 +8,13 @@ Cluster::Cluster(std::vector<Point> const& new_points) {
     id_ = current_id;
     points = new_points;
 
+    if (new_points.empty()) {
+        magnitude_ = 0;
+        azimuth_ = 0;
+        current_id++;
+        return;
+    }
+
     double total_magnitude = 0;
     double total_azimuth = 0;
     for (auto point:new_points) {
@@ -22,10 +29,14 @@ Cluster::Cluster(std::vector<Point> const& new_points) {
 }
 
 Cluster::BoundingBox Cluster::ConstructBoundingBox() {
+    if (points.empty()) {
+        return Cluster::BoundingBox(0, 0, 0, 0);
+    }
+
     double x_min = std::numeric_limits<double>::max();
-    double x_max = std::numeric_limits<double>::min();
+    double x_max = std::numeric_limits<double>::lowest();
     double y_min = std::numeric_limits<double>::max();
-    double y_max = std::numeric_limits<double>::min();
+    double y_max = std::numeric_limits<double>::lowest();
 
     for (auto point:points) {
         x_min = std::min(x_min, point.x());
@@ -45,7 +56,12 @@ Cluster::BoundingBox Cluster::ConstructBoundingBox() {
 }
 
 std::tuple<double, double> Cluster::Centroid() {
-    double x, y, z = 0;
+    if (points.empty()) {
+        return std::make_tuple(0, 0);
+    }
+
+    double x = 0;
+    double y = 0;
     for (auto point:points) {
         x += point.x();
         y += point.y();
@@ -64,6 +80,10 @@ double Cluster::IntraClusterDistance() {
             total_comparisons++;
         }
     }
+    if (total_comparisons == 0) {
+        return 0;
+    }
+
     double avg = total_distances/total_comparisons;
     return avg;
 }

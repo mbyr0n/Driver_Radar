@@ -24,7 +24,6 @@
 #define INIT_FAIL           6
 #define BAD_PORT            7
 #define BAD_SERVICE_ID      8
-#define NO_PUBLISHER        9
 #define NO_PUB_CLR_FAIL     10
 #define FALSE_DETECTION_1   11
 #define FALSE_DETECTION_2   12
@@ -36,6 +35,8 @@
 #define SS_GM_MISSING       18
 #define SS_PWR_REDUCED      19
 #define NO_PROCESS          20
+#define BAD_PACKET_SIZE     21
+#define PACKET_GROUP_FULL   22
 
 // Logging Verbosity Levels
 enum LoggingLevel {LOG_NONE, LOG_DEBUG, LOG_WARNING, LOG_ERROR};
@@ -70,7 +71,7 @@ class PacketProcessor {
         PacketProcessor();
 
         uint8_t initializePacketProcessor(RadarPublisher* newPublisher, uint8_t newscanMode);
-        uint8_t processRDIMsg(const radar_driver::RadarPacket::ConstPtr& packet);
+        uint8_t processRDIMsg(const radar_driver::msg::RadarPacket::SharedPtr packet);
         uint8_t processSSPacket(SSPacket_t* packet);
         void    setPublisherCallback(RadarPublisher* newPublisher);
         /* Print the index buffer chosen */
